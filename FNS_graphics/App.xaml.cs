@@ -1,6 +1,7 @@
 using System;
 using System.Windows;
 using FNS_graphics.Data;
+using FNS_graphics.Tests;
 
 namespace FNS_graphics
 {
@@ -14,6 +15,13 @@ namespace FNS_graphics
 
             DispatcherUnhandledException += App_DispatcherUnhandledException;
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+            if (Console_test_mode.Is_requested(e.Args))
+            {
+                int exitCode = Console_test_mode.Run(e.Args);
+                Shutdown(exitCode);
+                return;
+            }
 
             Fns_database database = new(Database_config.LoadConnectionString());
             AuthWindow authWindow = new(database);

@@ -37,6 +37,7 @@ namespace FNS_rebuild
             int max_length,
             int tests_per_length,
             int progress_step,
+            int length_step = 1,
             Cipher_options? options = null)
         {
             // Для каждой длины генерирует tests_per_length строк,
@@ -47,13 +48,16 @@ namespace FNS_rebuild
             // длины до Fast_max_length_without_blocks шифруются без блоков,
             // более длинные строки — в блочном режиме.
 
-            int total_lengths = max_length - min_length + 1;
+            if (length_step < 1)
+                throw new ArgumentOutOfRangeException(nameof(length_step), "Шаг длины должен быть >= 1.");
+
+            int total_lengths = ((max_length - min_length) / length_step) + 1;
             int total_tests = total_lengths * tests_per_length;
             int passed_tests = 0;
 
-            WriteLine(Build_start_report(min_length, max_length, tests_per_length, total_tests));
+            WriteLine(Build_start_report(min_length, max_length, tests_per_length, length_step, total_tests));
 
-            for (int length = min_length; length <= max_length; length++)
+            for (int length = min_length; length <= max_length; length += length_step)
             {
                 Cipher_options effective_options = options ?? Build_auto_options_for_length(length);
 
@@ -81,7 +85,7 @@ namespace FNS_rebuild
                     passed_tests++;
                 }
 
-                int processed_lengths = length - min_length + 1;
+                int processed_lengths = ((length - min_length) / length_step) + 1;
                 if (processed_lengths % progress_step == 0 || length == max_length)
                     WriteLine(Build_progress_report(length, passed_tests, total_tests));
             }
@@ -106,13 +110,14 @@ namespace FNS_rebuild
             };
         }
 
-        static string Build_start_report(int min_length, int max_length, int tests_per_length, int total_tests)
+        static string Build_start_report(int min_length, int max_length, int tests_per_length, int length_step, int total_tests)
         {
             // Формирует стартовую сводку тестирования.
 
             System.Text.StringBuilder output = new();
             output.AppendLine("Стохастическое тестирование шифрования запущено.");
             output.AppendLine($"Диапазон длин: {min_length}..{max_length}");
+            output.AppendLine($"Шаг по длине: {length_step}");
             output.AppendLine($"Тестов на каждую длину: {tests_per_length}");
             output.Append($"Всего раундов шифрование -> дешифрование: {total_tests}");
             return output.ToString();

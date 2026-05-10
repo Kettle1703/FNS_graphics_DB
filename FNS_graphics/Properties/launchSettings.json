@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "FNS_graphics": {
+      "commandName": "Project"
+    },
+    "Stochastic tests": {
+      "commandName": "Project",
+      "commandLineArgs": "--stochastic-tests --tests-per-length 3 --length-step 3 --progress-step 100 --pause-on-exit"
+    }
+  }
+}

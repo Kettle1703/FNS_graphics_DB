@@ -11,33 +11,32 @@ namespace FNS_rebuild
     {
         public static Dictionary<char, Digit> char_to_number = [];  // связь символа из алфавита и его порядкового номера в алфавите
 
-        // [НЕ ИСПОЛЬЗУЕТСЯ В ТЕКУЩЕЙ ВЕРСИИ]
-        // Поля factorial_table, factorial_base, factorial_length_to_index и методы Create_factorial_table,
-        // Rebuild_length_index, Convert_to_int нужны были старой реализации Convert_to_factorial_system,
-        // которая раскладывала число делением на убывающие факториалы.
-        // После перехода на алгоритм "снизу вверх" (Long_math.Divide_by_int с возрастающим делителем)
-        // и схему Горнера в Factorial_decoding эти структуры в шифровании/дешифровании не задействованы.
-        // Оставлены для будущих стратегий, диагностики (Analysis.Print_factorial_table) или экспериментов.
+        internal const int Precomputed_factorials_count = 1023;  // таблица хранит 1!..1023! в MongoDB
 
-        public static List<Digit[]> factorial_table = [];  // [НЕ ИСПОЛЬЗУЕТСЯ] вектор всех факториалов
-        public static Digit factorial_base = 0;  // [НЕ ИСПОЛЬЗУЕТСЯ] основание системы счисления, в которой посчитана таблица факториалов
-        public static Dictionary<int, int> factorial_length_to_index = [];  // [НЕ ИСПОЛЬЗУЕТСЯ] связывает длину факториала и индекс в таблице факториалов
+        public static List<Digit[]> factorial_table = [];  // вектор предрасчитанных факториалов из MongoDB
+        public static Digit factorial_base = 0;  // основание системы счисления, в которой посчитана таблица факториалов
+        public static Dictionary<int, int> factorial_length_to_index = [];  // [LEGACY] заменён MongoDB-коллекцией K(L)
 
-        // [НЕ ИСПОЛЬЗУЕТСЯ В ТЕКУЩЕЙ ВЕРСИИ] см. блок-комментарий выше
         public static void Create_factorial_table(int max_length)
         {
-            // создаёт или продолжает таблицу факториалов до длины max_length разрядов
+            // Историческая точка входа оставлена для совместимости.
+            // Раньше метод считал факториалы в C# через последовательное умножение.
+            // Сейчас рабочий путь не пересчитывает таблицу, а загружает предрасчитанные 1!..1023! из MongoDB.
+
+            Ensure_factorial_table_loaded();
+        }
+
+        [Obsolete("Рабочий путь использует MongoDB-таблицу. Метод оставлен только как legacy-реализация расчёта факториалов в C#.")]
+        static void Create_factorial_table_legacy_calculated(int max_length)
+        {
+            // ОТКЛЮЧЁННЫЙ LEGACY-КОД:
+            // создаёт или продолжает таблицу факториалов до длины max_length разрядов через умножение в C#.
+            // Не вызывается рабочим шифрованием, потому что таблица берётся из MongoDB.
             if (max_length < 1)
                 return;
 
-            if (factorial_base != Factorial_strategy.power)
-            {
-                // если основание системы счисления таблицы факториалов не совпадает с текущим основание
-                factorial_table.Clear();
-                factorial_length_to_index.Clear();
-                factorial_base = Factorial_strategy.power;
-            }
-
+            Reset_factorial_table_cache();
+            factorial_base = Factorial_strategy.power;
             Digit[] current;
             int n;
 
@@ -70,9 +69,11 @@ namespace FNS_rebuild
             Rebuild_length_index();
         }
 
-        // [НЕ ИСПОЛЬЗУЕТСЯ В ТЕКУЩЕЙ ВЕРСИИ] см. блок-комментарий выше
-        static void Rebuild_length_index()
+        internal static void Rebuild_length_index()
         {
+            // LEGACY: производный индекс по длинам факториалов.
+            // Рабочий путь использует MongoDB-коллекцию factorial_length_index с готовыми K(L).
+
             // строит словарь: длина -> индекс последнего факториала с такой длиной
             factorial_length_to_index.Clear();
             if (factorial_table.Count == 0)
@@ -105,6 +106,61 @@ namespace FNS_rebuild
                 value = value * base_value + digits[i];
 
             return value;
+        }
+
+        internal static void Ensure_factorial_table_loaded()
+        {
+            Factorial_table_storage.Ensure_loaded(Factorial_strategy.power, Precomputed_factorials_count);
+        }
+
+        internal static void Reset_factorial_table_cache()
+        {
+            factorial_table.Clear();
+            factorial_length_to_index.Clear();
+            factorial_base = 0;
+            Factorial_table_storage.Reset_loaded_state();
+        }
+
+        [Obsolete("K(L) хранится в MongoDB-коллекции factorial_length_index. Метод оставлен только для проверки старой схемы расчёта.")]
+        internal static int Get_required_factorial_coefficients_count(Digit[] value)
+        {
+            // Возвращает K: минимальное количество коэффициентов ФСС для числа value.
+            // LEGACY: раньше это считалось сравнением с таблицей факториалов.
+            // Сейчас рабочий путь читает готовое K(L) из MongoDB.
+
+            if (value.Length == 0)
+                return 1;
+            if (value.Length == 1 && value[0] == 0)
+                return 1;
+
+            Ensure_factorial_table_loaded();
+
+            int left = 0;
+            int right = factorial_table.Count - 1;
+            int best = -1;
+
+            while (left <= right)
+            {
+                int middle = (left + right) / 2;
+                Digit[] factorial = factorial_table[middle];
+
+                if (Less_or_equal(factorial, value))
+                {
+                    best = middle;
+                    left = middle + 1;
+                }
+                else
+                {
+                    right = middle - 1;
+                }
+            }
+
+            return best < 0 ? 1 : best + 1;
+        }
+
+        static bool Less_or_equal(Digit[] left, Digit[] right)
+        {
+            return !Long_math.Less_than(right, left);
         }
 
         public static Digit[] Convert_to_factorial_system(Digit[] value)

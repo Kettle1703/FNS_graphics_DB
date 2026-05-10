@@ -18,7 +18,7 @@ namespace FNS_rebuild
         internal static Dictionary<byte, char> byte_to_char = [];  // связь байта и символа алфавита
         internal static Dictionary<char, byte> char_to_byte = [];  // обратная связь символа и байта
 
-        const int Max_factorial = 1024;  // старший используемый факториал: 1024!
+        const int Max_factorial = 1023;  // старший факториал, хранящийся в MongoDB: 1023!
         const int Max_control_bits_per_coef = 2;  // максимум служебных бит на коэффициент сжатия
         const int Max_control_code = 3;  // 00 -> +0, 01 -> +256, 10 -> +512, 11 -> +768
         const int Compression_free_factorial_coefficients = 255;  // первые 255 коэффициентов ФСС всегда <= 255 и не требуют коэффициентов сжатия
@@ -27,13 +27,9 @@ namespace FNS_rebuild
         const int Two_bit_compression_start = Compression_free_mixed_coefficients + One_bit_compression_mixed_coefficients;  // дальше снова нужны 2 бита
         internal const int Max_source_length_without_blocks = 1096;  // гарантированная длина без подблоков для текущего формата и мощности алфавита
 
-        // Словарь K(L): длина исходной строки -> сколько коэффициентов ФСС нужно в худшем случае.
-        // Нужен для выравнивания потока коэффициентов ФСС без добивки всегда до 1023.
+        // RAM-копия MongoDB-коллекции K(L): длина исходной строки -> сколько коэффициентов ФСС нужно в худшем случае.
+        // Нужна для быстрых чтений без повторных запросов к БД.
         internal static Dictionary<int, int> source_length_to_factorial_coefficients_count = [];
-
-        // Словарь худших чисел: длина исходной строки -> число power^L - 1.
-        // Нужен для быстрого повторного расчёта K(L) для уже встречавшихся длин.
-        internal static Dictionary<int, Digit[]> source_length_to_worst_number = [];
 
         // Термины этого класса:
         // коэффициенты длины: два первых служебных коэффициента (младший и старший байты длины исходной строки);
@@ -62,15 +58,25 @@ namespace FNS_rebuild
         {
             // Конструктор с пользовательским алфавитом: строит таблицы соответствий символ <-> число.
 
+            int previous_power = power;
             alphabet = Unique_alphabet(input);
+            bool power_changed = previous_power != alphabet.Length;
             power = (Digit)alphabet.Length;
 
             Factorial_encoding.char_to_number.Clear();
             Factorial_decoding.number_to_char.Clear();
             byte_to_char.Clear();
             char_to_byte.Clear();
-            source_length_to_factorial_coefficients_count.Clear();
-            source_length_to_worst_number.Clear();
+
+            if (power_changed)
+            {
+                // Эти данные зависят от мощности алфавита, но не от порядка символов.
+                // При гибридном шифровании алфавит постоянно перемешивается, а power остаётся 256,
+                // поэтому повторно очищать их на каждый пакет не нужно.
+                source_length_to_factorial_coefficients_count.Clear();
+                Factorial_encoding.Reset_factorial_table_cache();
+            }
+
             Coefficient_diffusion.Clear_key_cache();
 
             Digit counter = 0;
@@ -435,48 +441,20 @@ namespace FNS_rebuild
 
         static int Get_required_factorial_coefficients_count(int source_text_length)
         {
-            // Возвращает K(L) из словаря, при отсутствии — вычисляет и кэширует.
+            // Возвращает K(L) из MongoDB-индекса, загруженного в RAM один раз.
 
-            if (source_length_to_factorial_coefficients_count.TryGetValue(source_text_length, out int cached))
-                return cached;
+            if (source_text_length < 1)
+                return 1;
 
-            int calculated = Calculate_required_factorial_coefficients_count(source_text_length);
-            source_length_to_factorial_coefficients_count[source_text_length] = calculated;
-            return calculated;
-        }
+            if (source_text_length > Max_source_length_without_blocks)
+                throw new InvalidOperationException($"Длина блока {source_text_length} превышает гарантированный предел {Max_source_length_without_blocks}. Включите блочный режим.");
 
-        static int Calculate_required_factorial_coefficients_count(int source_text_length)
-        {
-            // Считает K(L) по худшему числу длины L.
+            Factorial_table_storage.Ensure_length_index_loaded(power, Max_source_length_without_blocks);
 
-            Digit[] worst_number = Get_worst_number_for_source_length(source_text_length);
-            Digit[] worst_factorial_coefficients = Factorial_encoding.Convert_to_factorial_system(worst_number);
-            return worst_factorial_coefficients.Length;
-        }
+            if (source_length_to_factorial_coefficients_count.TryGetValue(source_text_length, out int value))
+                return value;
 
-        static Digit[] Get_worst_number_for_source_length(int source_text_length)
-        {
-            // Возвращает худшее число для длины L из словаря, при отсутствии — создаёт и кэширует.
-
-            if (source_length_to_worst_number.TryGetValue(source_text_length, out Digit[]? cached) && cached is not null)
-                return cached;
-
-            Digit[] created = Build_worst_number_for_source_length(source_text_length);
-            source_length_to_worst_number[source_text_length] = created;
-            return created;
-        }
-
-        static Digit[] Build_worst_number_for_source_length(int source_text_length)
-        {
-            // Строит число power^L - 1 как массив из L разрядов со значением power-1.
-
-            if (source_text_length <= 0)
-                return [];
-
-            Digit max_digit = (Digit)(power - 1);
-            Digit[] result = new Digit[source_text_length];
-            Array.Fill(result, max_digit);
-            return result;
+            throw new InvalidOperationException($"В MongoDB-индексе K(L) нет записи для длины {source_text_length}.");
         }
 
         static Digit[] With_length_coefficients(Digit[] factorial_coefficients, int source_text_length)

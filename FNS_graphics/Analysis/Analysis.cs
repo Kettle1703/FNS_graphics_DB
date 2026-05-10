@@ -147,9 +147,10 @@ namespace FNS_rebuild
 
         public static int Find_max_source_length_without_blocks()
         {
-            // Вычисляет гарантированную максимальную длину без подблоков для ЛЮБОЙ строки.
+            // Возвращает гарантированную максимальную длину без подблоков для ЛЮБОЙ строки.
+            // Раньше метод строил граничный факториал умножением в C#.
+            // Сейчас таблица факториалов хранится в MongoDB, а рабочий предел зафиксирован в формате шифротекста.
             int max_factorial_coefficient = 1023;
-            int factorial_border_index = max_factorial_coefficient + 1; // 1024
 
             if (Factorial_strategy.power == 0)
             {
@@ -157,24 +158,8 @@ namespace FNS_rebuild
                 return 0;
             }
 
-            Digit[] factorial_border_value = [1]; // значение 1024! в длинной арифметике
-            for (int i = 2; i <= factorial_border_index; i++)
-                factorial_border_value = Long_math.Multiply_by_digit(factorial_border_value, (Digit)i, 0);
-
-            int max_safe_length = 0;
-            Digit max_digit = (Digit)(Factorial_strategy.power - 1);
-
-            for (int length = 1; ; length++)
-            {
-                Digit[] max_number_for_length = new Digit[length]; // power^L - 1
-                Array.Fill(max_number_for_length, max_digit);
-
-                if (!Long_math.Less_than(max_number_for_length, factorial_border_value))
-                    break;
-
-                max_safe_length = length;
-            }
-
+            Factorial_encoding.Ensure_factorial_table_loaded();
+            int max_safe_length = Factorial_strategy.Max_source_length_without_blocks;
             int first_unsafe_length = max_safe_length + 1;
             int low_byte = max_safe_length & 255;
             int high_byte = (max_safe_length >> 8) & 255;
@@ -186,7 +171,7 @@ namespace FNS_rebuild
             output.AppendLine($"Гарантированная максимальная длина для любой строки: {max_safe_length}");
             output.AppendLine($"Первая потенциально небезопасная длина: {first_unsafe_length}");
             output.AppendLine($"Разложение длины на коэффициенты длины: младший={low_byte}, старший={high_byte}");
-            output.Append("Формула критерия: power^L - 1 < 1024!");
+            output.Append("Таблица факториалов загружена из MongoDB; повторный расчёт факториалов в C# не выполняется.");
             WriteLine(output.ToString());
 
             return max_safe_length;
